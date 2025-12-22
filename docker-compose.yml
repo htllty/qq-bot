@@ -1,0 +1,58 @@
+services:
+  # --- 1. 连接器: NapCatQQ (协议端) ---
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: always
+    environment:
+      - ACCOUNT=      # 首次启动留空，使用扫码登录
+      - WS_ENABLE=true
+      - HTTP_ENABLE=true
+      # 映射当前用户ID (通常是1000)，防止生成 root 权限的文件无法编辑
+      - NAPCAT_UID=1000
+      - NAPCAT_GID=1000
+      - TZ=Asia/Shanghai
+    ports:
+      - "6099:6099"   # WebUI 管理端口
+    volumes:
+      - ./napcat/config:/app/napcat/config
+      - ./napcat/qq:/app/.config/QQ  # 关键！持久化登录凭证
+    # --- 专家配置: 资源限制 ---
+    # 防止 Electron 内存泄漏卡死树莓派
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    # --- 专家配置: 日志轮转 ---
+    # 防止 Docker 日志写满 SD 卡
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --- 2. 大脑: NoneBot2 (逻辑端) ---
+  nonebot:
+    build: ./nonebot  # 使用刚才创建的 Dockerfile 构建
+    container_name: nonebot
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DRIVER=~fastapi
+      - HOST=0.0.0.0  # 必须监听 0.0.0.0 以供 NapCat 连接
+      - PORT=8080
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./nonebot/plugins:/app/plugins  # 挂载插件目录，方便热更新代码
+      - ./nonebot_data:/data            # 挂载数据目录
+    depends_on:
+      - napcat
+    # 允许反向连接
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

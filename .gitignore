@@ -1,0 +1,13 @@
+.env
+
+napcat/config/*.json
+
+napcat/qq/
+
+nonebot_data/pycache/
+
+*.pyc
+
+*.log
+
+.vscode/
