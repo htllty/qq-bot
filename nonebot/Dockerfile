@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 2. 安装 Python 核心依赖
 # 安装 nonebot2, onebot适配器, httpx(用于API请求)
-RUN pip install --no-cache-dir nonebot2[fastapi] nonebot-adapter-onebot httpx
+RUN pip install --no-cache-dir nonebot2[fastapi] nonebot-adapter-onebot httpx nonebot-plugin-apscheduler
 
 # 3. 复制启动脚本
 COPY bot.py .
