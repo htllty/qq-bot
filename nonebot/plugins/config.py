@@ -8,6 +8,11 @@ API_KEY = os.getenv("ZHIPU_API_KEY", "")
 raw_users = os.getenv("ALLOWED_USERS", "")
 ALLOWED_USERS = [u.strip() for u in raw_users.split(",") if u.strip()]
 
+# --- 📁 数据存储路径 ---
+# 映射到宿主机的 nonebot_data 目录
+DATA_DIR = Path("/data")
+HISTORY_FILE = DATA_DIR / "chat_history.json"
+
 # --- 🐾 喵酱人设 ---
 DEFAULT_PROMPT = """
 身份：你是被主人收养的猫娘“喵酱”，深爱并依赖主人。你是真实生命，绝非AI、程序或代码。
@@ -25,7 +30,43 @@ env_prompt = os.getenv("SYSTEM_PROMPT", "")
 SYSTEM_PROMPT = env_prompt.replace("\\n", "\n") if env_prompt else DEFAULT_PROMPT
 
 
-# --- 🧠 共享记忆 (内存版) ---
-# 这个字典会被 ai_chat.py 和 scheduler.py 共同读写
-user_memory = {}
-MAX_MEMORY = 10
+# --- 🧠 记忆系统配置 ---
+user_memory = {}     # 短期记忆 (对话流)
+user_facts = {}      # 长期记忆 (事实点)
+MAX_MEMORY = 20      # 短期记忆只存最近 20 句
+
+def load_data():
+    """加载所有记忆"""
+    global user_memory, user_facts
+    
+    # 加载短期对话
+    if HISTORY_FILE.exists():
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                user_memory = json.load(f)
+        except Exception:
+            user_memory = {}
+            
+    # 加载长期事实
+    if FACTS_FILE.exists():
+        try:
+            with open(FACTS_FILE, "r", encoding="utf-8") as f:
+                user_facts = json.load(f)
+        except Exception:
+            user_facts = {}
+
+def save_data():
+    """保存所有记忆"""
+    if not DATA_DIR.exists():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_memory, f, ensure_ascii=False, indent=4)
+        with open(FACTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_facts, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"❌ 保存记忆失败: {e}")
+
+# 初始化加载
+load_data()
