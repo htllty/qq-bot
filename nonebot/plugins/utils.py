@@ -1,38 +1,54 @@
 import httpx
 import time
+import re
+from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from .config import SYSTEM_PROMPT, API_KEY, user_memory, MAX_MEMORY
 
-async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = ""):
+def parse_reply(text: str) -> Message:
     """
-    统一调用 AI 的接口。
-    user_msg: 用户说的话（如果是主动搭讪，这里可以留空或填提示词）
-    system_hint: 额外的系统提示（比如时间、场景）
+    智能解析 AI 回复：
+    1. 提取 [CQ:face,id=123] 并转为表情对象
+    2. 其他部分保留为文本
     """
+    msg = Message()
+    # 正则匹配 [CQ:face,id=数字]
+    pattern = r"\[CQ:face,id=(\d+)\]"
     
-    # 1. 初始化记忆
+    # 分割字符串：text 会被分成 [文本, ID, 文本, ID, ...]
+    chunks = re.split(pattern, text)
+    
+    for i, chunk in enumerate(chunks):
+        if not chunk: continue # 跳过空字符
+        
+        # re.split 的特性：偶数索引是文本，奇数索引是捕获组(即表情ID)
+        if i % 2 == 0:
+            msg.append(MessageSegment.text(chunk))
+        else:
+            # 这是一个表情ID
+            try:
+                face_id = int(chunk)
+                msg.append(MessageSegment.face(face_id))
+            except ValueError:
+                # 万一 AI 输出了非数字 ID，当文本处理
+                msg.append(MessageSegment.text(f"[CQ:face,id={chunk}]"))
+                
+    return msg
+
+async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = ""):
     if user_id not in user_memory:
         user_memory[user_id] = []
 
-    # 2. 注入时间
-    current_time = time.strftime("%H:%M", time.localtime())
-    full_prompt = f"{SYSTEM_PROMPT}\n(当前时间：{current_time})\n{system_hint}"
+    current_time = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    full_prompt = f"{SYSTEM_PROMPT}\n\n(当前时间：{current_time})\n{system_hint}"
 
-    # 3. 构建消息列表
     messages = [{"role": "system", "content": full_prompt}]
-    messages.extend(user_memory[user_id]) # 加入历史记忆
+    messages.extend(user_memory[user_id]) 
     
-    # --- 🛠️ 关键修复开始 ---
-    # 智谱 API 要求最后一条必须是 User。
-    # 如果是主动搭讪 (user_msg is None)，我们将 system_hint 包装成 User 消息发送。
-    # 这样 API 会认为这是用户在发指令，但我们在第 5 步不把它存入记忆。
     if user_msg:
         messages.append({"role": "user", "content": user_msg})
     else:
-        # 这里的 system_hint 就是 "现在是早上8点，请主动..."
         messages.append({"role": "user", "content": system_hint})
-    # --- 🛠️ 关键修复结束 ---
 
-    # 4. 发送请求
     url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -40,7 +56,7 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
     }
     data = {
         "model": "glm-4-flash",
-        "messages": messages, # ✅ 这里修复了你之前代码中 messages 没用上的 Bug
+        "messages": messages,
         "temperature": 0.95
     }
 
@@ -50,23 +66,19 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
             result = resp.json()
 
             if 'choices' in result:
-                reply = result['choices'][0]['message']['content']
+                raw_reply = result['choices'][0]['message']['content']
                 
-                # 5. 更新记忆
-                # 只有当 user_msg 真实存在时，才把用户的这句话存入记忆。
-                # 如果是主动搭讪（user_msg 为空），那条伪装的指令不会被存入，
-                # 这样记忆里看起来就是机器人突然想起来跟你说话，非常自然。
+                # 更新记忆 (存纯文本，方便 AI 理解上下文)
                 if user_msg:
                     user_memory[user_id].append({"role": "user", "content": user_msg})
+                user_memory[user_id].append({"role": "assistant", "content": raw_reply})
                 
-                user_memory[user_id].append({"role": "assistant", "content": reply})
-                
-                # 截断记忆
                 if len(user_memory[user_id]) > MAX_MEMORY * 2:
                     user_memory[user_id] = user_memory[user_id][-MAX_MEMORY * 2:]
                 
-                return reply
+                # ⚠️ 关键修改：使用自定义解析器处理 CQ 码
+                return parse_reply(raw_reply)
             else:
-                return f"喵呜...大脑短路了喵: {result}"
+                return Message(f"喵呜...脑子卡住了喵: {result}")
     except Exception as e:
-        return f"喵酱掉线了喵... ({str(e)})"
+        return Message(f"喵酱生病了喵... ({str(e)})")
