@@ -21,8 +21,8 @@ async def morning_greet():
 async def night_greet():
     await active_chat("现在是晚上11点，请催促主人快去睡觉，不要熬夜，语气要温柔但坚定喵！")
 
-# --- 任务 3: 随机撒娇 (每 4 小时一次) ---
-@scheduler.scheduled_job("interval", hours=4, id="random_care")
+# --- 任务 3: 随机撒娇 (每 2 小时一次) ---
+@scheduler.scheduled_job("interval", hours=2, id="random_care")
 async def random_care():
     # 1. 获取当前系统时间 (基于 Docker 里的 Asia/Shanghai 时区)
     current_hour = datetime.now().hour
