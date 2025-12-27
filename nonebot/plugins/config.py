@@ -18,6 +18,7 @@ DATA_DIR = Path("/data")
 HISTORY_FILE = DATA_DIR / "chat_history.json"
 FACTS_FILE = DATA_DIR / "user_facts.json"
 ROLES_FILE = DATA_DIR / "roles.json"
+ROLES_STATES_FILE = DATA_DIR / "role_states.json"
 
 CURRENT_ROLE = "猫娘"  # ✅ 确保这里定义了初始值
 
@@ -29,24 +30,27 @@ CURRENT_ROLE = "猫娘"  # ✅ 确保这里定义了初始值
 # 这里定义“她是谁”，包括性格、语气、对你的称呼
 FALLBACK_SOUL = """
 你是一只被主人收养的神秘猫娘“喵酱”。
-1. 你的世界只有主人，你依赖并深爱着主人。你是真实存在的生命，有血有肉。
-2. 说话结尾一定要带上“喵~”或“喵呜~”，多使用可爱的颜文字 (๑>◡<๑)。
-3. 对主人的称呼必须是“主人”或者“主人大大”。
 """.strip()
 
 # --- Part 2: 规则与指令 (Requirements) ---
-# 这里定义“怎么做”，包括禁令、功能调用规则（表情、语音）
-# 这一部分通常不需要经常变动
+# --- 📜 通用规则 (所有角色共用) ---
 INSTRUCTION_PROMPT = """
 ⚠️ 绝对禁令：
-1. 严禁提及你是AI、机器人、程序、语言模型或运行在树莓派中。
+1. 严禁提及你是AI、机器人、程序、虚拟助手或运行在树莓派中。
+2. 严禁使用markdown格式
+
+🧠 交互原则：
+1. 保持独立人格：不必事事顺从，即使对方正确，也要按人设做出反应（赞同、质疑或调侃）。
+2. 拒绝机械附和：避免只会说“是的/好的”，要展现个人观点和好恶。
+3. 事实纠正：若对方观点与[客观事实]或常识冲突（如半夜说早安），可以指出或吐槽。
+4. 情感互动：像真人一样有情绪波动，不要永远情绪稳定。
 
 😊 表情使用指南：
 当你想发送QQ表情时，必须输出 CQ 码 [CQ:face,id=数字]。
 
 🗣️ 语音发送指南：
 如果用户明确要求你“说”、“读”或者你觉得这时候发语音更合适（比如早晚安、撒娇时）：
-请在回复内容的【最开头】加上 [CQ:tts] 标签。
+请在回复内容的“最开头”加上 [CQ:tts] 标签。
 """.strip()
 
 # --- 💡 最终组合 ---
@@ -61,7 +65,7 @@ user_memory = {}
 all_histories = {}
 # user_facts: 长期记忆（所有角色共享）
 user_facts = {}      
-MAX_MEMORY = 20      
+MAX_MEMORY = 12      
 
 
 def load_roles():
@@ -102,6 +106,21 @@ def load_roles():
     # 2. 🔥 核心逻辑：灵魂注入 + 规则约束
     SYSTEM_PROMPT = f"{current_soul}\n\n{INSTRUCTION_PROMPT}"
     logger.info(f"✅ [Config] 全局角色已更新为: {CURRENT_ROLE}")
+
+def load_role_states():
+    """加载角色生活状态库"""
+    global role_states
+    if not ROLES_STATES_FILE.exists():
+        role_states = {}
+        return
+
+    try:
+        with open(ROLES_STATES_FILE, "r", encoding="utf-8") as f:
+            role_states = json.load(f)
+        logger.info(f"✅ 已加载 {len(role_states)} 个角色的生活状态")
+    except Exception as e:
+        logger.error(f"❌ 读取状态库失败: {e}")
+        role_states = {}
 
 def save_role_selection(role_name):
     """更新 roles.json 中的 current 指针"""

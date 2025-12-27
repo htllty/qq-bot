@@ -1,29 +1,40 @@
 import httpx
 import time
 import re
+import json
+import random
 from datetime import datetime
 from zhdate import ZhDate
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
-from .config import API_KEY, user_memory, user_facts, MAX_MEMORY, save_data, MASTER_BIRTHDAY
+# 导入 config 模块以便访问最新变量
 from . import config
 from .tts import generate_voice
 
-def parse_reply(text: str) -> Message:
-    # 🛠️ 关键修复：兼容 AI 抽风输出的中文全角符号
-    # 把 【CQ:face...】 强行变成 [CQ:face...]
-    text = text.replace("【", "[").replace("】", "]")
+def strip_markdown(text: str) -> str:
+    """去除 Markdown 格式"""
+    # 去除代码块框，保留内容
+    text = text.replace('```', '')
+    text = text.replace('`', '')
+    # 去除加粗
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    # 去除标题 #
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    return text.strip()
 
+def parse_reply(text: str) -> Message:
+    # 0. 清洗 Markdown 和全角符号
+    text = strip_markdown(text)
+    text = text.replace("【", "[").replace("】", "]")
+    
     msg = Message()
     
-    # 1. 检查语音标签 [CQ:tts]
+    # 1. 语音处理
     if "[CQ:tts]" in text:
-        # 清理标签，准备生成语音
         clean_text = text.replace("[CQ:tts]", "").replace("[CQ:face,id=", "").replace("]", "").strip()
-        # 使用正则彻底清除所有 CQ 码内容 (包括表情ID)
         clean_text = re.sub(r"\[CQ:[^\]]+\]", "", clean_text)
         
-        logger.info(f"🎤 触发语音回复: {clean_text[:10]}...")
+        logger.info(f"🎤 触发语音: {clean_text[:10]}...")
         if clean_text:
             audio_bytes = generate_voice(clean_text)
             if audio_bytes:
@@ -31,66 +42,33 @@ def parse_reply(text: str) -> Message:
             else:
                 msg.append(MessageSegment.text("（语音生成失败喵...）"))
 
-    # 2. 解析 QQ 表情
-    # 正则匹配 [CQ:face,id=数字]
+    # 2. 表情处理
     pattern = r"\[CQ:face,id=(\d+)\]"
     chunks = re.split(pattern, text)
-    
     for i, chunk in enumerate(chunks):
         if not chunk: continue
-        
-        # 过滤掉 [CQ:tts] 标签文本，不让它显示出来
         if "[CQ:tts]" in chunk: continue
         
-        # re.split 切分后，偶数位是文本，奇数位是捕获组(ID)
         if i % 2 == 0:
             msg.append(MessageSegment.text(chunk))
         else:
             try:
-                # 奇数位是 ID，转为表情对象
                 msg.append(MessageSegment.face(int(chunk)))
-            except ValueError:
-                # 万一解析失败，还原为文本
+            except:
                 msg.append(MessageSegment.text(f"[CQ:face,id={chunk}]"))
-                
     return msg
 
 async def consolidate_memory(user_id: str):
-    """
-    🧠 记忆固化：将过期的短期对话提炼成长期事实
-    """
     if user_id not in config.user_memory or len(config.user_memory[user_id]) <= config.MAX_MEMORY:
         return
     
-    # 提取最早的记忆进行总结
     to_summarize = config.user_memory[user_id][:-config.MAX_MEMORY]
     remaining = config.user_memory[user_id][-config.MAX_MEMORY:]
     
-    # 📝 优化后的提炼指令：增加负面约束，防止记录废话和破绽
-    summary_prompt = """
-    请分析以上对话，提取关于【用户】的关键事实信息。
+    summary_prompt = "请分析对话，提取关于【用户】的长期固定事实（喜好、习惯、身份）。忽略临时状态（饿了、困了）和闲聊。若无信息答'无'。每条一行。"
     
-    ✅ 需要提取的内容：
-    - 用户的称呼、自称、别名。
-    - 用户的喜好、厌恶、兴趣爱好。
-    - 用户的个人信息（生日、居住地、职业、作息习惯等）。
-    - 用户提到过的具体经历或计划。
-
-    ❌ 严禁提取的内容：
-    - 不要记录关于“喵酱”、“AI”、“虚拟助手”的任何描述。
-    - 不要记录“用户正在聊天”、“用户与助手互动”这类交互行为。
-    - 不要记录临时的客套话（如“你好”、“早安”）。
-
-    输出要求：
-    - 只输出事实短句，每条一行。
-    - 如果没有新的关键信息，请直接回答“无”。
-    """
-    
-    # 构造请求消息：把要总结的对话 + 总结指令 发给 AI
-    # 注意：这里 role='user' 是为了模拟用户发出总结命令
     messages = to_summarize + [{"role": "user", "content": summary_prompt}]
-    
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    url = "[https://open.bigmodel.cn/api/paas/v4/chat/completions](https://open.bigmodel.cn/api/paas/v4/chat/completions)"
     headers = {"Authorization": f"Bearer {config.API_KEY}", "Content-Type": "application/json"}
     
     try:
@@ -99,65 +77,91 @@ async def consolidate_memory(user_id: str):
             result = resp.json()
             if 'choices' in result:
                 facts = result['choices'][0]['message']['content']
-                if "无" not in facts and "没有" not in facts:
+                if "无" not in facts and len(facts) > 2:
                     if user_id not in config.user_facts: config.user_facts[user_id] = []
-                    
-                    # 简单的格式清洗，防止 AI 啰嗦
-                    clean_facts = facts.replace("用户事实：", "").replace("提取事实：", "").strip()
-                    config.user_facts[user_id].append(f"【回忆】{clean_facts}")
-                    logger.info(f"🧠 [记忆提炼] 新增: {clean_facts}")
+                    clean_fact = facts.replace("用户事实：", "").replace("- ", "").strip()
+                    config.user_facts[user_id].append(f"【回忆】{clean_fact}")
+                    logger.info(f"🧠 记忆提炼: {clean_fact}")
     except Exception as e:
         logger.error(f"❌ 记忆提炼失败: {e}")
 
-    # 更新内存并保存
-    user_memory[user_id] = remaining
-    save_data()
+    config.user_memory[user_id] = remaining
+    config.save_data()
 
 def get_environment_hint():
+    """生成环境感知 (包含角色专属生活状态)"""
     now = datetime.now()
     lunar = ZhDate.from_datetime(now)
-    lunar_str = f"{lunar.lunar_month:02d}-{lunar.lunar_day:02d}"
     current_time_str = now.strftime("%H:%M")
     hour = now.hour
     
-    hints = [f"客观时间：{current_time_str}"]
+    # 1. 客观时间
+    hints = [f"【客观时间】{current_time_str}"]
     
-    if lunar_str == MASTER_BIRTHDAY:
+    # 2. 农历/节日
+    lunar_str = f"{lunar.lunar_month:02d}-{lunar.lunar_day:02d}"
+    if lunar_str == config.MASTER_BIRTHDAY:
         hints.append(f"【重要日期】今天是农历{lunar.chinese()[:5]}，也是主人的生日。")
     
-    if 23 <= hour or hour < 5:
-        hints.append("【环境氛围】夜深人静，适合休息。")
-    elif 5 <= hour < 9:
-        hints.append("【环境氛围】清晨，新的一天。")
+    # 3. 动态获取【当前角色】的状态库
+    # 优先取当前角色，取不到则取 default，再取不到则用保底列表
+    current_states = config.role_states.get(config.CURRENT_ROLE, config.role_states.get("default", {}))
+    
+    state_desc = ""
+    env_desc = ""
+
+    if 23 <= hour or hour < 7:
+        pool = current_states.get("sleep", ["正在休息"])
+        state_desc = random.choice(pool)
+        env_desc = "深夜模式，适合休息。"
+    elif 11 <= hour < 14:
+        pool = current_states.get("lunch", ["在吃饭"])
+        state_desc = random.choice(pool)
+        env_desc = "午休时间。"
+    else:
+        pool = current_states.get("idle", ["无所事事"])
+        state_desc = random.choice(pool)
+        env_desc = "日常活动时间。"
+
+    hints.append(f"【环境氛围】{env_desc}")
+    hints.append(f"【你的当前状态】{state_desc}。")
     
     return "\n".join(hints)
 
 async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = ""):
-    if user_id not in user_memory: user_memory[user_id] = []
-    if user_id not in user_facts: user_facts[user_id] = []
+    if user_id not in config.user_memory: config.user_memory[user_id] = []
+    if user_id not in config.user_facts: config.user_facts[user_id] = []
 
+    # 1. 组装 System Prompt (人设 + 环境 + 长期记忆)
     env_prompt = get_environment_hint()
-    long_term_memory_str = "\n".join(user_facts[user_id][-10:]) or "暂无"
+    long_memory = "\n".join(config.user_facts[user_id][-10:]) or "暂无"
 
-    full_prompt = (
+    full_system_prompt = (
         f"{config.SYSTEM_PROMPT}\n\n"
-        f"--- 当前知觉 ---\n{env_prompt}\n\n"
-        f"--- 深层记忆 ---\n{long_term_memory_str}\n"
+        f"=== 当前环境与状态 (绝对真实) ===\n{env_prompt}\n\n"
+        f"=== 核心记忆库 ===\n{long_memory}\n"
     )
 
-    if user_msg and system_hint:
-        full_prompt += f"\n--- 潜意识直觉 ---\n{system_hint}"
-
-    messages = [{"role": "system", "content": full_prompt}]
-    messages.extend(user_memory[user_id]) 
+    messages = [{"role": "system", "content": full_system_prompt}]
     
+    # 2. 放入短期记忆 (纯净对话)
+    messages.extend(config.user_memory[user_id]) 
+    
+    # 3. 放入当前消息
     if user_msg:
         messages.append({"role": "user", "content": user_msg})
     else:
+        # 主动搭讪
         messages.append({"role": "user", "content": f"（心里突然想到：{system_hint}）"})
 
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    try:
+        # 调试日志
+        prompt_debug = json.dumps(messages[-2:], ensure_ascii=False, indent=2)
+        logger.info(f"\n{'='*20} [LLM Input] {'='*20}\n...{prompt_debug}\n{'='*60}")
+    except: pass
+
+    url = "[https://open.bigmodel.cn/api/paas/v4/chat/completions](https://open.bigmodel.cn/api/paas/v4/chat/completions)"
+    headers = {"Authorization": f"Bearer {config.API_KEY}", "Content-Type": "application/json"}
     data = {"model": "glm-4-flash", "messages": messages, "temperature": 0.95}
 
     try:
@@ -168,15 +172,16 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
             if 'choices' in result:
                 raw_reply = result['choices'][0]['message']['content']
                 
+                # 4. 更新记忆 (存纯净版)
                 if user_msg:
-                    user_memory[user_id].append({"role": "user", "content": user_msg})
-                    
-                user_memory[user_id].append({"role": "assistant", "content": raw_reply})
+                    config.user_memory[user_id].append({"role": "user", "content": user_msg})
                 
-                if len(user_memory[user_id]) > MAX_MEMORY + 4:
+                config.user_memory[user_id].append({"role": "assistant", "content": raw_reply})
+                
+                if len(config.user_memory[user_id]) > config.MAX_MEMORY + 4:
                     await consolidate_memory(user_id)
                 else:
-                    save_data()
+                    config.save_data()
                 
                 return parse_reply(raw_reply)
             else:
