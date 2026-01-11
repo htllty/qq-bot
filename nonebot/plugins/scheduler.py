@@ -2,6 +2,7 @@ from nonebot import require, get_bot
 from nonebot.log import logger
 import random
 from datetime import datetime
+import asyncio
 
 # 引入定时任务组件
 require("nonebot_plugin_apscheduler")
@@ -55,27 +56,22 @@ async def random_care():
 # 🚀 核心发送逻辑
 # =========================================================
 
+
 async def active_chat(thought_content: str):
-    """
-    主动发起对话
-    thought_content: 此时此刻 AI 脑子里的“念头”
-    """
     try:
         bot = get_bot()
     except ValueError:
-        logger.warning("⚠️ 机器人尚未连接，无法主动发送消息")
         return
 
     for user_id in ALLOWED_USERS:
-        # 我们把这个中性念头传给 utils.py
-        # utils.py 会把它包装成: （心里突然想到：天亮了，去打个招呼...）
-        # AI 会结合当前人设（比如黑客），输出：“检测到时间已到0800，Admin早安。”
-        reply = await call_zhipu_ai(user_id, user_msg=None, system_hint=thought_content)
+        # 获取消息列表
+        replies = await call_zhipu_ai(user_id, user_msg=None, system_hint=thought_content)
         
-        # 发送消息
         try:
-            # 这里的 reply 已经是处理好的 Message 对象（包含表情/语音）
-            await bot.send_private_msg(user_id=int(user_id), message=reply)
-            logger.info(f"✅ 已向 {user_id} 发送主动消息")
+            # 🔥 循环发送
+            for msg in replies:
+                await bot.send_private_msg(user_id=int(user_id), message=msg)
+                logger.info(f"✅ 主动消息发送成功")
+                await asyncio.sleep(2.0) # 间隔 2 秒
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")

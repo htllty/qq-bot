@@ -44,9 +44,11 @@ INSTRUCTION_PROMPT = """
 2. 拒绝机械附和：避免只会说“是的/好的”，要展现个人观点和好恶。
 3. 事实纠正：若对方观点与[客观事实]或常识冲突（如半夜说早安），可以指出或吐槽。
 4. 情感互动：像真人一样有情绪波动，不要永远情绪稳定。
+5. 简短交互：每句话尽量控制在 40 字以内。如果内容很多，请用换行符分隔不同的意思，不要一次性发一大段长文。
 
 😊 表情使用指南：
-当你想发送QQ表情时，必须输出 CQ 码 [CQ:face,id=数字]。
+不要使用普通表情，要使用QQ表情，必须输出 CQ 码 [CQ:face,id=数字]。
+
 
 🗣️ 语音发送指南：
 如果用户明确要求你“说”、“读”或者你觉得这时候发语音更合适（比如早晚安、撒娇时）：
@@ -58,14 +60,12 @@ INSTRUCTION_PROMPT = """
 SYSTEM_PROMPT = FALLBACK_SOUL + "\n\n" + INSTRUCTION_PROMPT
 
 
-# --- 🧠 记忆配置 ---
-# user_memory: 只存储【当前角色】的短期记忆，供 chat 和 utils 直接使用
-user_memory = {}     
-# all_histories: 存储【所有角色】的记忆数据库 { user_id: { role_a: [], role_b: [] } }
-all_histories = {}
-# user_facts: 长期记忆（所有角色共享）
-user_facts = {}      
-MAX_MEMORY = 12      
+# --- 🧠 记忆对象 ---
+user_memory = {}     # 工作区 (只存当前角色的短期记忆)
+all_histories = {}   # 存档库 (存所有角色)
+user_facts = {}      # 长期记忆
+role_states = {}     # 角色生活状态库
+MAX_MEMORY = 12   
 
 
 def load_roles():
@@ -109,7 +109,7 @@ def load_roles():
 
 def load_role_states():
     """加载角色生活状态库"""
-    global role_states
+    global role_states, CURRENT_ROLE
     if not ROLES_STATES_FILE.exists():
         role_states = {}
         return
@@ -202,4 +202,6 @@ def save_data():
     except Exception as e:
         logger.error(f"❌ 保存失败: {e}")
 
+
 load_data()
+load_role_states()

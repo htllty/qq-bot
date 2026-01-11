@@ -7,9 +7,9 @@ from nonebot.exception import FinishedException
 from . import config
 from .utils import call_zhipu_ai
 import json
+import asyncio # 👈 新增：用于延时
 
-# --- 🚀 基础聊天逻辑 ---
-# 优先级为 10 (较低)，block=True 阻断事件
+
 chat = on_message(rule=to_me(), priority=10, block=True) 
 
 @chat.handle()
@@ -17,24 +17,22 @@ async def handle_first_receive(bot: Bot, event: Event):
     user_id = str(event.get_user_id())
     user_msg = event.get_plaintext().strip()
 
-    # 1. 基础权限检查
-    if user_id not in config.ALLOWED_USERS or not user_msg:
-        return
-    
-    # 2. 🛡️ 记忆保护与指令隔离 (关键逻辑)
-    # 只要消息以 @ 开头，就被视为指令（无论是否有效）。
-    # 直接 return 意味着：
-    #   - 不会发给 AI 进行回复
-    #   - 绝对不会调用 call_zhipu_ai，因此**不会**被计入短期记忆
-    if user_msg.startswith("@"):
-        return
-    
-    if not config.API_KEY:
-        await chat.finish("喵呜...API Key 没填喵！")
+    if user_id not in config.ALLOWED_USERS or not user_msg: return
+    if user_msg.startswith("@"): return
+    if not config.API_KEY: await chat.finish("喵呜...API Key 没填喵！")
 
-    # 只有非指令的普通对话，才会进入这里处理并产生记忆
-    reply = await call_zhipu_ai(user_id, user_msg)
-    await chat.finish(reply)
+    # 获取消息列表
+    replies = await call_zhipu_ai(user_id, user_msg)
+    
+    # 🔥 循环发送
+    for i, msg in enumerate(replies):
+        if i == len(replies) - 1:
+            # 最后一条用 finish 结束事件
+            await chat.finish(msg)
+        else:
+            # 中间的消息用 send，并等待 1.5 秒模拟打字
+            await chat.send(msg)
+            await asyncio.sleep(1.5)
 
 # --- 🛠️ 系统管理指令区 ---
 # 注意：以下所有指令均未调用记忆存储函数，因此交互过程天然不进记忆
