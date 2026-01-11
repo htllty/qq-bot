@@ -120,24 +120,25 @@ def get_environment_hint():
     current_states = config.role_states.get(config.CURRENT_ROLE, config.role_states.get("default", {}))
     state_desc = ""
     
+    hints.append(f"【环境氛围】{env_desc}。")
+    
     if 23 <= hour or hour < 7:
         pool = current_states.get("sleep", ["正在休息"])
         state_desc = random.choice(pool)
         env_desc = "深夜模式"
+        hints.append(f"【你的后台状态】{state_desc}。")
     elif 11 <= hour < 14:
         pool = current_states.get("lunch", ["在吃饭"])
         state_desc = random.choice(pool)
         env_desc = "午休时间"
+        hints.append(f"【你的后台状态】{state_desc}。")
     else:
-        pool = current_states.get("idle", ["无所事事"])
-        state_desc = random.choice(pool)
-        env_desc = "日常活动"
-
-    # 将生活状态作为背景板信息，而不是用户说的话
-    hints.append(f"【环境氛围】{env_desc}。")
-    hints.append(f"【你的后台状态】{state_desc}。")
-    
-    
+        rand = random.random()
+        if rand >= 0.5:
+            pool = current_states.get("idle", ["无所事事"])
+            state_desc = random.choice(pool)
+            env_desc = "日常活动"
+            hints.append(f"【你的后台状态】{state_desc}。")
     
     return "\n".join(hints)
 
