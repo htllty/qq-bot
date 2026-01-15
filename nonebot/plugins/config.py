@@ -95,7 +95,7 @@ def load_roles():
                     first_key = list(data["roles"].keys())[0]
                     CURRENT_ROLE = first_key
                     current_soul = data["roles"][first_key]
-                    logger.warning(f"⚠️ 指定角色 {key} 不存在，回退至: {CURRENT_ROLE}")
+                    logger.warning(f"⚠️ 指定角色 {current_key} 不存在，回退至: {CURRENT_ROLE}")
             elif data:
                 # 简单结构
                 current_soul = list(data.values())[0]

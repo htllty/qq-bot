@@ -1,7 +1,7 @@
 import httpx
-import time
 import re
 import json
+import asyncio
 import random
 from datetime import datetime
 from zhdate import ZhDate
@@ -120,27 +120,37 @@ def get_environment_hint():
     current_states = config.role_states.get(config.CURRENT_ROLE, config.role_states.get("default", {}))
     state_desc = ""
     
-    hints.append(f"【环境氛围】{env_desc}。")
+    hints.append(f"【环境氛围】{state_desc}。")
     
     if 23 <= hour or hour < 7:
         pool = current_states.get("sleep", ["正在休息"])
         state_desc = random.choice(pool)
         env_desc = "深夜模式"
-        hints.append(f"【你的后台状态】{state_desc}。")
+        hints.append(f"【你的后台状态】{env_desc}。")
     elif 11 <= hour < 14:
         pool = current_states.get("lunch", ["在吃饭"])
         state_desc = random.choice(pool)
         env_desc = "午休时间"
-        hints.append(f"【你的后台状态】{state_desc}。")
+        hints.append(f"【你的后台状态】{env_desc}。")
     else:
-        rand = random.random()
-        if rand >= 0.5:
+        if random.random() >= 0.5:
             pool = current_states.get("idle", ["无所事事"])
             state_desc = random.choice(pool)
             env_desc = "日常活动"
-            hints.append(f"【你的后台状态】{state_desc}。")
+            hints.append(f"【你的后台状态】{env_desc}。")
     
     return "\n".join(hints)
+
+async def _post_with_retry(client, url, data, headers, retry=1):
+    try:
+        return await client.post(url, json=data, headers=headers)
+    except httpx.RequestError as e:
+        # DNS / 网络类错误（最常见就是 Errno -2）
+        if retry > 0:
+            logger.warning(f"[Network] 请求失败，重试中... ({e})")
+            await asyncio.sleep(0.5)
+            return await _post_with_retry(client, url, data, headers, retry - 1)
+        raise
 
 async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = ""):
     if user_id not in config.user_memory: config.user_memory[user_id] = []
@@ -175,13 +185,13 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
         # 🔥 关键修改：主动搭讪模式 (System Trigger + Dummy User)
         
         # 1. 注入导演指令 (System Role)
-        trigger_msg = f"【Instructor】此时此刻，你心里突然想到：“{system_hint}”。请顺着这个念头，根据当前人设主动向主人发起对话。"
+        trigger_msg = f"【Instructor】此时此刻，你心里突然想到：“{system_hint}”。请顺着这个念头，根据当前人设主动发起对话。"
         messages.append({"role": "system", "content": trigger_msg})
         
         # 2. 注入沉默/等待 (User Role)
         # 这一步是为了满足 API "最后一条必须是 User" 的要求
         # AI 会理解为：指令下达了，用户现在是沉默状态，轮到 AI 开口了。
-        messages.append({"role": "user", "content": "（...）"})
+        messages.append({"role": "user", "content": "现在轮到你主动说话。"})
         
 
     try:
@@ -195,7 +205,7 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=data, headers=headers)
+            resp = await _post_with_retry(client, url, data, headers)
             result = resp.json()
 
             if 'choices' in result:
@@ -217,6 +227,13 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
                 return msg_list # 返回 List[Message]
             
             else:
-                return [Message(f"喵呜...脑子卡住了喵: {result}")]
+                logger.error(f"[LLM] 返回结构异常: {result}")
+            return [Message("喵呜……这次回应的结构有点奇怪，等一下再试吧。")]
+    except httpx.RequestError as e:
+        # 明确：网络 / DNS 层错误
+        logger.error(f"[Network Error] 无法连接到 LLM 服务: {e}")
+        return [Message("喵呜……网络有点不稳定，喵酱刚刚没连上服务器。")]
+
     except Exception as e:
         return [Message(f"喵酱生病了喵... ({str(e)})")]
+

@@ -3,6 +3,8 @@ from nonebot.log import logger
 import random
 from datetime import datetime
 import asyncio
+import httpx
+from . import config
 
 # 引入定时任务组件
 require("nonebot_plugin_apscheduler")
@@ -37,20 +39,70 @@ async def random_care():
     if current_hour >= 23 or current_hour < 8:
         return
 
-    # 3. 概率触发 (30% 概率，避免太烦人)
+    # 3. 概率触发 (70% 概率，避免太烦人)
     if random.random() > 0.3:
         return
         
-    # 随机选择一个“中性念头”，适配所有角色
-    # 不再包含“撒娇”、“主人”等特定词汇
-    thoughts = [
-        "突然有点想找对方说话，不知道现在方便吗。",
-        "感觉现在的气氛很适合聊聊天。",
-        "想根据当前的人设风格，去和对方互动一下。",
-        "好久没发消息了，去刷一下存在感吧。",
-        "观察一下时间，看看是不是该提醒对方注意休息或者喝水了。"
-    ]
-    await active_chat(random.choice(thoughts))
+    env_hint = f"当前时间：{datetime.now().strftime('%H:%M')}"
+    
+    topic = await generate_topic_by_time(
+        role_name=config.CURRENT_ROLE,
+        env_hint=env_hint
+    )
+
+    await active_chat(topic)
+
+
+async def generate_topic_by_time(role_name: str, env_hint: str):
+    """
+    只负责生成“聊什么”，不负责说话
+    """
+    
+    prompt = f"""
+你是一个对话策划助手，不参与角色扮演。
+
+当前信息：
+- 时间与环境：{env_hint}
+- AI 当前人设：{role_name}
+
+你的任务：
+根据当前时间和状态，生成一个【适合主动发起聊天的话题】。
+
+要求：
+- 使用固定格式输出
+- 不要使用任何角色语气
+- 不要直接生成聊天内容
+- 内容应简短、客观、可供角色发挥
+
+输出格式如下（必须严格遵守）：
+
+【话题类型】
+【时间段】
+【触发原因】
+【建议方向】
+"""
+
+    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {config.API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "glm-4-flash",
+        "messages": [
+            {"role": "system", "content": "你是一个冷静、理性的对话策划器。"},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.4  # 低温，保证稳定
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=data, headers=headers)
+        result = resp.json()
+
+    return result["choices"][0]["message"]["content"]
+
 
 # =========================================================
 # 🚀 核心发送逻辑
