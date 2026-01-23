@@ -1,0 +1,14 @@
+[tool.nonebot]
+adapters = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
+]
+# 👇 把所有依赖插件都显式写出来，确保万无一失
+plugins = [
+    "nonebot_plugin_orm",
+    "nonebot_plugin_alconna", 
+    "nonebot_plugin_localstore",
+    "nonebot_plugin_uninfo",
+    "nonebot_plugin_waiter",
+    "nonebot_plugin_memes"
+]
+plugin_dirs = ["plugins"]

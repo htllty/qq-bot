@@ -3,19 +3,21 @@ import re
 import json
 import asyncio
 import random
+import tempfile
+import os
 from datetime import datetime
-from io import BytesIO 
 from zhdate import ZhDate
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
-# 📦 引入 Memes 插件的管理器
+# 📦 引入 Memes 核心
 try:
     from nonebot_plugin_memes.manager import meme_manager
+    from meme_generator import Image
     MEMES_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     MEMES_AVAILABLE = False
-    logger.warning("⚠️ 未检测到 nonebot-plugin-memes，表情生成功能将失效")
+    logger.error(f"❌ Memes 模块导入失败: {e}")
 
 from . import config
 from .tts import generate_voice
@@ -28,13 +30,6 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 def split_text_smart(text: str, limit: int = 100) -> list[str]:
-    """
-    智能长文本切分算法：
-    1. 优先按换行符切分
-    2. 如果某段过长，按句子标点切分
-    3. 尽量保持 [CQ:...] 完整
-    """
-    # 预处理：把连续的换行符合并
     text = re.sub(r'\n+', '\n', text)
     lines = text.split('\n')
     result = []
@@ -43,19 +38,13 @@ def split_text_smart(text: str, limit: int = 100) -> list[str]:
         line = line.strip()
         if not line: continue
         
-        # 如果这行很短，或者包含 TTS 指令(通常要连贯)，直接添加
         if len(line) <= limit or "[CQ:tts]" in line:
             result.append(line)
         else:
-            # 如果太长，按标点符号拆分 (保留分隔符)
-            # 正则解释：按 。？！!?~～ 分割，并保留分割符
             sub_parts = re.split(r'([。？！!?~～])', line)
-            
             buf = ""
             for part in sub_parts:
-                # 累加长度检查
                 if len(buf) + len(part) > limit:
-                    # 如果当前缓冲区有内容，先存起来
                     if buf: result.append(buf)
                     buf = part
                 else:
@@ -64,68 +53,111 @@ def split_text_smart(text: str, limit: int = 100) -> list[str]:
             
     return result
 
-# 🔥 新增：根据 User ID 下载头像
 async def get_user_avatar(user_id: str) -> bytes:
-    url = f"http://q.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+    # 稳定接口
+    url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(url, timeout=10)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = await client.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 return resp.content
         except Exception as e:
             logger.error(f"❌ 头像下载失败: {e}")
     return None
 
-# 🔥 新增：生成表情包 Bytes
+# 🔥 生成表情包 Bytes (带随机概率控制)
 async def generate_emotion_meme(emotion: str, user_id: str) -> bytes:
     if not MEMES_AVAILABLE: return None
     
-    # 1. 查找映射
+    # === 🎲 随机发图控制 ===
+    # 0.3 = 30% 的概率发图。你可以把这个数字改大(0.8)或改小(0.1)
+    # 逻辑：生成一个 0~1 的随机数，如果大于 0.3，就直接跳过不发
+    if random.random() > 0.3:
+        # logger.info(f"🎲 骰子判定: 这次不发表情包 ({emotion})")
+        return None
+
     meme_keys = config.EMOTION_MEME_MAP.get(emotion)
     if not meme_keys: return None
     
-    # 2. 随机选一个效果
     meme_key = random.choice(meme_keys)
-    meme = meme_manager.find(meme_key)
-    if not meme:
-        logger.warning(f"⚠️ 找不到表情包 key: {meme_key}")
-        return None
+    found_memes = meme_manager.find(meme_key)
+    if not found_memes: return None
+    meme = found_memes[0] 
 
-    # 3. 获取用户头像 (作为素材)
-    avatar = await get_user_avatar(user_id)
-    if not avatar: return None
+    # 只有当决定要发图了，才去下载头像，这样也省流量
+    avatar_bytes = await get_user_avatar(user_id)
+    if not avatar_bytes: return None
 
-    # 4. 生成图片
     try:
-        # memes 插件通常接受 images 列表（字节流）和 texts 列表
-        # 这里的逻辑是：生成一张基于“用户头像”的表情包
-        result = await meme.generate(images=[avatar], texts=[])
-        return result.getvalue() # 返回 bytes
+        img = Image(data=avatar_bytes, name="avatar.png")
+        
+        # 默认 2 张图，兼容亲亲/贴贴
+        min_images = 2 
+        
+        # 尝试读取真实需求
+        if hasattr(meme, "info") and hasattr(meme.info, "params"):
+             if hasattr(meme.info.params, "min_images"):
+                 min_images = meme.info.params.min_images
+
+        # 填充图片
+        images_list = [img]
+        while len(images_list) < min_images:
+            images_list.append(img)
+            
+        # 生成
+        result = meme.generate(images=images_list, texts=[], options={})
+        
+        if asyncio.iscoroutine(result): result = await result
+        if isinstance(result, bytes): return result
+        elif hasattr(result, "getvalue"): return result.getvalue()
+        return result
+        
     except Exception as e:
-        logger.error(f"❌ 表情包生成出错 ({meme_key}): {e}")
+        logger.error(f"❌ 表情包生成出错 ({meme_key}): {str(e)}")
         return None
 
 def parse_reply(text: str) -> Message:
+    # 1. 清洗
     text = strip_markdown(text)
     text = text.replace("【", "[").replace("】", "]")
-    msg = Message()
+    text = text.replace("，", ",").replace("：", ":") 
     
+    # 2. TTS
+    tts_bytes = None
     if "[CQ:tts]" in text:
-        clean_text = text.replace("[CQ:tts]", "").replace("[CQ:face,id=", "").replace("]", "").strip()
-        clean_text = re.sub(r"\[CQ:[^\]]+\]", "", clean_text)
-        if clean_text:
-            audio_bytes = generate_voice(clean_text)
-            if audio_bytes: return MessageSegment.record(file=audio_bytes)
+        tts_content = text.replace("[CQ:tts]", "")
+        tts_clean = re.sub(r"\[CQ:.*?\]", "", tts_content).strip() 
+        if tts_clean:
+            tts_bytes = generate_voice(tts_clean)
+        text = text.replace("[CQ:tts]", "")
 
-    pattern = r"\[CQ:face,id=(\d+)\]"
-    chunks = re.split(pattern, text)
-    for i, chunk in enumerate(chunks):
-        if not chunk: continue
-        if "[CQ:tts]" in chunk: continue
-        if i % 2 == 0: msg.append(MessageSegment.text(chunk))
-        else:
-            try: msg.append(MessageSegment.face(int(chunk)))
-            except: msg.append(MessageSegment.text(f"[CQ:face,id={chunk}]"))
+    # 3. 过滤干扰
+    text = re.sub(r"\[CQ:(?!face)[^\]]+\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
+
+    # 4. 构建消息
+    msg = Message()
+    if tts_bytes:
+        msg.append(MessageSegment.record(file=tts_bytes))
+
+    pattern = r"(.*?)\[CQ:face.*?id=\s*(\d+).*?\]"
+    
+    last_end = 0
+    for match in re.finditer(pattern, text, flags=re.DOTALL | re.IGNORECASE):
+        pre_text = match.group(1)
+        face_id = match.group(2)
+        
+        if pre_text: msg.append(MessageSegment.text(pre_text))
+        try: msg.append(MessageSegment.face(int(face_id)))
+        except: pass
+        last_end = match.end()
+        
+    remaining = text[last_end:]
+    if remaining: msg.append(MessageSegment.text(remaining))
+            
+    if len(msg) == 0: msg.append(MessageSegment.text("（...）"))
+
     return msg
 
 async def consolidate_memory(user_id: str):
@@ -171,32 +203,31 @@ def get_environment_hint():
     current_states = config.role_states.get(config.CURRENT_ROLE, config.role_states.get("default", {}))
     state_desc = ""
     
-    hints.append(f"【环境氛围】{state_desc}。")
-    
     if 23 <= hour or hour < 7:
         pool = current_states.get("sleep", ["正在休息"])
         state_desc = random.choice(pool)
         env_desc = "深夜模式"
-        hints.append(f"【你的后台状态】{env_desc}。")
     elif 11 <= hour < 14:
         pool = current_states.get("lunch", ["在吃饭"])
         state_desc = random.choice(pool)
         env_desc = "午休时间"
-        hints.append(f"【你的后台状态】{env_desc}。")
     else:
         if random.random() >= 0.5:
             pool = current_states.get("idle", ["无所事事"])
             state_desc = random.choice(pool)
             env_desc = "日常活动"
-            hints.append(f"【你的后台状态】{env_desc}。")
-    
+        else:
+            state_desc = "正在发呆"
+            env_desc = "日常"
+            
+    hints.append(f"【环境氛围】{state_desc}。")
+    hints.append(f"【你的后台状态】{env_desc}。")
     return "\n".join(hints)
 
 async def _post_with_retry(client, url, data, headers, retry=1):
     try:
         return await client.post(url, json=data, headers=headers)
     except httpx.RequestError as e:
-        # DNS / 网络类错误（最常见就是 Errno -2）
         if retry > 0:
             logger.warning(f"[Network] 请求失败，重试中... ({e})")
             await asyncio.sleep(0.5)
@@ -210,7 +241,6 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
     env_prompt = get_environment_hint()
     long_memory = "\n".join(config.user_facts[user_id][-10:]) or "暂无"
 
-    # 构建完整 Prompt
     full_prompt = (
         f"{config.SYSTEM_PROMPT}\n\n"
         f"=== 核心记忆库 ===\n{long_memory}\n\n"
@@ -225,29 +255,17 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
     )
 
     messages = [{"role": "system", "content": full_prompt}]
-
-    # 保留原始 memory
     messages.extend(config.user_memory[user_id])
     
     if user_msg:
-        # 被动回复：这是用户刚才说的话
         messages.append({"role": "user", "content": user_msg})
     else:
-        # 🔥 关键修改：主动搭讪模式 (System Trigger + Dummy User)
-        
-        # 1. 注入导演指令 (System Role)
         trigger_msg = f"【Instructor】此时此刻，你心里突然想到：“{system_hint}”。请顺着这个念头，根据当前人设主动发起对话。"
         messages.append({"role": "system", "content": trigger_msg})
-        
-        # 2. 注入沉默/等待 (User Role)
-        # 这一步是为了满足 API "最后一条必须是 User" 的要求
-        # AI 会理解为：指令下达了，用户现在是沉默状态，轮到 AI 开口了。
         messages.append({"role": "user", "content": "现在轮到你主动说话。"})
-        
 
     try:
-        prompt_debug = json.dumps(messages[-3:], ensure_ascii=False, indent=2)
-        logger.info(f"\n{'='*20} [LLM Input] {'='*20}\n...{prompt_debug}\n{'='*60}")
+        pass
     except: pass
 
     url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -262,7 +280,6 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
             if 'choices' in result:
                 raw_reply = result['choices'][0]['message']['content']
                 
-                # 存入记忆
                 if user_msg:
                     config.user_memory[user_id].append({"role": "user", "content": user_msg})
                 config.user_memory[user_id].append({"role": "assistant", "content": raw_reply})
@@ -272,16 +289,11 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
                 else:
                     config.save_data()
                 
-                # ✅ 核心逻辑：尝试解析 JSON
                 try:
-                    # 预处理：有时候 LLM 会包裹 markdown 代码块，先去除
                     clean_json = raw_reply.replace("```json", "").replace("```", "").strip()
                     reply_list = json.loads(clean_json)
-                    
-                    # 确保是列表
                     if isinstance(reply_list, dict): reply_list = [reply_list]
                     
-                    # 格式化输出
                     final_list = []
                     for item in reply_list:
                         final_list.append({
@@ -292,18 +304,10 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
 
                 except json.JSONDecodeError:
                     logger.warning(f"[JSON Parse Fail] 回落到普通文本模式")
-                    # 如果解析失败，回落到普通切割，emotion 为空
                     text_segments = split_text_smart(raw_reply)
                     return [{"text": seg, "emotion": None} for seg in text_segments]
-            
             else:
                 return [{"text": "喵呜……API 返回有点异常。", "emotion": "sad"}]
-    except httpx.RequestError as e:
-        # 明确：网络 / DNS 层错误
-        logger.error(f"[Network Error] 无法连接到 LLM 服务: {e}")
-        return [Message("喵呜……网络有点不稳定，喵酱刚刚没连上服务器。")]
-
     except Exception as e:
         logger.error(f"API Error: {e}")
         return [{"text": "喵酱生病了...连不上脑回路。", "emotion": "sad"}]
-

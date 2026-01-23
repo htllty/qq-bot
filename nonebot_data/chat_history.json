@@ -1,0 +1,62 @@
+{
+    "2949306962": {
+        "猫娘": [
+            {
+                "role": "user",
+                "content": "发一个摸头的表情包"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"[CQ:face,id=35]\", \"emotion\": \"cute\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "发一个摸头的表情包"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"[CQ:face,id=35]\", \"emotion\": \"cute\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "发一个摸头的表情包"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"[CQ:face,id=35]\", \"emotion\": \"cute\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "这是摸头吗？"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"哎呀，这不是摸头喵~ 是个可爱的表情哦！\", \"emotion\": \"cute\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "确实可爱"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"主人也觉得可爱嘛喵~ 那我就放心啦喵呜~\", \"emotion\": \"happy\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "你好啊"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"你好呀，主人~ 今天有什么好事发生吗喵~\", \"emotion\": \"happy\"}\n```"
+            },
+            {
+                "role": "user",
+                "content": "我喜欢的人好像不是很在乎我怎么办"
+            },
+            {
+                "role": "assistant",
+                "content": "```json\n{\"text\": \"哎呀，感情的事情总是复杂的喵~ 主人不要难过，感情需要时间和耐心，也许你可以试着表达自己的感受，看看对方的反应喵~\", \"emotion\": \"sad\"}\n```"
+            }
+        ]
+    }
+}

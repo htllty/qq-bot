@@ -33,9 +33,15 @@ services:
 
   # --- 2. 大脑: NoneBot2 (逻辑端) ---
   nonebot:
-    build: ./nonebot  # 使用刚才创建的 Dockerfile 构建
+    # ✅ 改回自动构建，但加上 network: host 来解决 DNS 问题
+    build:
+      context: ./nonebot
+      network: host      # 关键！这行能让构建过程直接连网，不再报 DNS 错
+    
+    image: qq-bot-image:latest
     container_name: nonebot
     restart: always
+    command: /bin/sh -c "nb orm upgrade && python bot.py"
     env_file:
       - .env
     environment:
@@ -43,6 +49,9 @@ services:
       - HOST=0.0.0.0  # 必须监听 0.0.0.0 以供 NapCat 连接
       - PORT=8080
       - TZ=Asia/Shanghai
+      # 👇 必须添加这行配置！
+      # 这会创建一个叫 db.sqlite3 的文件在你的 /data 目录下 (因为你挂载了 /data)
+      - SQLALCHEMY_DATABASE_URL=sqlite+aiosqlite:////data/db.sqlite3
     volumes:
       - ./nonebot/plugins:/app/plugins  # 挂载插件目录，方便热更新代码
       - ./nonebot_data:/data            # 挂载数据目录
