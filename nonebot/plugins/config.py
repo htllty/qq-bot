@@ -49,15 +49,87 @@ INSTRUCTION_PROMPT = """
 😊 表情使用指南：
 不要使用普通表情，要使用QQ表情，必须输出 CQ 码 [CQ:face,id=数字]。
 
-
 🗣️ 语音发送指南：
 如果用户明确要求你“说”、“读”或者你觉得这时候发语音更合适（比如早晚安、撒娇时）：
 请在回复内容的“最开头”加上 [CQ:tts] 标签。
+
+=== 🎭 表情包调用指南 ===
+当你觉得适合发送图片时，请在 emotion 字段返回以下关键词之一：
+- happy: 开心、赞同、表扬
+- cute: 撒娇、卖萌、喜欢
+- angry: 生气、炸毛、想打人
+- sad: 难过、委屈、无语
+- shock: 震惊、疑惑、难以置信
+- play: 调皮、想吃东西、玩闹
+- worship: 崇拜对方、认输
 """.strip()
 
 # --- 💡 最终组合 ---
 # 全局变量：最终生效的 System Prompt
 SYSTEM_PROMPT = FALLBACK_SOUL + "\n\n" + INSTRUCTION_PROMPT
+
+
+# --- 🎭 情绪与表情包映射 ---
+# ⚠️ 注意：确保你的 nonebot-plugin-memes 是最新版，否则部分 Key 可能不生效
+EMOTION_MEME_MAP = {
+    # 🌟 积极/开心/喜欢
+    "happy": [
+        "petpet",       # 摸头 (经典)
+        "pat",          # 拍拍
+        "support",      # 精神支柱 (举着你的头像)
+        "always",       # 永远爱你 (类似结婚证风格)
+        "perfect",      # 完美 (P图风格)
+    ],
+    
+    # 🎀 撒娇/亲昵/可爱 (猫娘必备)
+    "cute": [
+        "rub",          # 贴贴/蹭蹭
+        "kiss",         # 亲亲
+        "prpr",         # 舔屏/舔舔
+        "capoo_rub",    # 咖波猫蹭蹭 (非常适合猫设)
+        "love_you",     # 永远爱你
+    ],
+    
+    # 💢 生气/攻击性/傲娇
+    "angry": [
+        "gun",          # 手枪指着
+        "hammer",       # 锤子砸
+        "bite",         # 咬 (非常适合猫娘)
+        "hit_screen",   # 打屏幕
+        "kick_ball",    # 踢球 (把你当球踢)
+        "police",       # 出警 (抓走)
+    ],
+    
+    # 💧 悲伤/委屈/无奈
+    "sad": [
+        "rip",          # 墓碑/走好 (比较搞怪的悲伤)
+        "littleangel",  # 小天使 (升天了)
+        "throw",        # 被丢掉/丢垃圾
+    ],
+    
+    # 😲 震惊/疑惑/懵逼
+    "shock": [
+        "shock",        # 震惊
+        "ask",          # 问号/疑惑
+        "confuse",      # 迷惑
+        "dianzhongdian",# 典中典/吃瓜
+    ],
+    
+    # 🍽️ 玩弄/调戏/吃掉 (适合比较皮的性格)
+    "play": [
+        "eat",          # 吃掉
+        "play",         # 顶球/玩耍
+        "turn",         # 转转/滚筒洗衣机
+        "crawl",        # 爬/爬走
+        "look_flat",    # 看扁/鄙视
+    ],
+    
+    # 🙇 崇拜/服从
+    "worship": [
+        "worship",      # 膜拜
+        "thump_wildly", # 狂扁 (这个其实是激动的拍桌子/捶地)
+    ],
+}
 
 
 # --- 🧠 记忆对象 ---

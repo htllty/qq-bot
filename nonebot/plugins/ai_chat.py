@@ -1,11 +1,11 @@
 from nonebot import on_message, on_command
-from nonebot.adapters.onebot.v11 import Bot, Event, Message
+from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
 from nonebot.params import CommandArg
 from nonebot.rule import to_me
 # ⚠️ 必须导入这个异常
 from nonebot.exception import FinishedException
 from . import config
-from .utils import call_zhipu_ai
+from .utils import call_zhipu_ai, generate_emotion_meme
 import json
 import asyncio # 👈 新增：用于延时
 
@@ -21,18 +21,41 @@ async def handle_first_receive(bot: Bot, event: Event):
     if user_msg.startswith("@"): return
     if not config.API_KEY: await chat.finish("喵呜...API Key 没填喵！")
 
-    # 获取消息列表
+    # 获取消息列表 (现在是 list of dict)
     replies = await call_zhipu_ai(user_id, user_msg)
     
-    # 🔥 循环发送
-    for i, msg in enumerate(replies):
-        if i == len(replies) - 1:
-            # 最后一条用 finish 结束事件
-            await chat.finish(msg)
-        else:
-            # 中间的消息用 send，并等待 1.5 秒模拟打字
-            await chat.send(msg)
+    # 🔥 循环发送逻辑更新
+    for i, item in enumerate(replies):
+        text_content = item["text"]
+        emotion = item["emotion"]
+        
+        # 1. 先发文字 (如果有 TTS 标签，utils 里的 parse_reply 逻辑如果是 Message 对象需要注意)
+        # 简单起见，这里直接发文字。如果你的 utils.parse_reply 处理了 [CQ:tts]，可以在这里调用它
+        # msg_obj = parse_reply(text_content) 
+        # await chat.send(msg_obj)
+        
+        # 简单文字发送：
+        if text_content:
+            await chat.send(text_content)
+        
+        # 2. 处理表情包 (如果有 emotion 且不是最后一条，或者最后一条也可以发)
+        if emotion:
+            # ⏳ 生成表情包需要时间，稍微延时一点点让体验更像“发完文字随手发个表情”
+            await asyncio.sleep(0.5) 
+            
+            meme_bytes = await generate_emotion_meme(emotion, user_id)
+            if meme_bytes:
+                await chat.send(MessageSegment.image(meme_bytes))
+        
+        # 3. 模拟人类打字间隔
+        if i < len(replies) - 1:
             await asyncio.sleep(1.5)
+
+    # 结束事件 (避免 Nonebot 继续向下传播)
+    # 注意：如果上面都在用 send，这里用 finish 可能会导致最后一条没发出来就断了，或者只是用来截断。
+    # 因为上面已经发完了，这里可以直接 return 或者发一个空的 finish
+    # await chat.finish() 
+    # 为了保险，不做任何操作直接结束函数即可，或者 raise FinishedException
 
 # --- 🛠️ 系统管理指令区 ---
 # 注意：以下所有指令均未调用记忆存储函数，因此交互过程天然不进记忆

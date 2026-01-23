@@ -4,9 +4,19 @@ import json
 import asyncio
 import random
 from datetime import datetime
+from io import BytesIO 
 from zhdate import ZhDate
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
+
+# 📦 引入 Memes 插件的管理器
+try:
+    from nonebot_plugin_memes.manager import meme_manager
+    MEMES_AVAILABLE = True
+except ImportError:
+    MEMES_AVAILABLE = False
+    logger.warning("⚠️ 未检测到 nonebot-plugin-memes，表情生成功能将失效")
+
 from . import config
 from .tts import generate_voice
 
@@ -53,6 +63,47 @@ def split_text_smart(text: str, limit: int = 100) -> list[str]:
             if buf: result.append(buf)
             
     return result
+
+# 🔥 新增：根据 User ID 下载头像
+async def get_user_avatar(user_id: str) -> bytes:
+    url = f"http://q.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, timeout=10)
+            if resp.status_code == 200:
+                return resp.content
+        except Exception as e:
+            logger.error(f"❌ 头像下载失败: {e}")
+    return None
+
+# 🔥 新增：生成表情包 Bytes
+async def generate_emotion_meme(emotion: str, user_id: str) -> bytes:
+    if not MEMES_AVAILABLE: return None
+    
+    # 1. 查找映射
+    meme_keys = config.EMOTION_MEME_MAP.get(emotion)
+    if not meme_keys: return None
+    
+    # 2. 随机选一个效果
+    meme_key = random.choice(meme_keys)
+    meme = meme_manager.find(meme_key)
+    if not meme:
+        logger.warning(f"⚠️ 找不到表情包 key: {meme_key}")
+        return None
+
+    # 3. 获取用户头像 (作为素材)
+    avatar = await get_user_avatar(user_id)
+    if not avatar: return None
+
+    # 4. 生成图片
+    try:
+        # memes 插件通常接受 images 列表（字节流）和 texts 列表
+        # 这里的逻辑是：生成一张基于“用户头像”的表情包
+        result = await meme.generate(images=[avatar], texts=[])
+        return result.getvalue() # 返回 bytes
+    except Exception as e:
+        logger.error(f"❌ 表情包生成出错 ({meme_key}): {e}")
+        return None
 
 def parse_reply(text: str) -> Message:
     text = strip_markdown(text)
@@ -159,24 +210,24 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
     env_prompt = get_environment_hint()
     long_memory = "\n".join(config.user_facts[user_id][-10:]) or "暂无"
 
+    # 构建完整 Prompt
     full_prompt = (
         f"{config.SYSTEM_PROMPT}\n\n"
         f"=== 核心记忆库 ===\n{long_memory}\n\n"
+        f"=== 当前环境与状态 (绝对真实) ===\n{env_prompt}\n\n"
+        f"=== ⚠️ 角色扮演强化指令 ===\n"
+        f"你正在扮演【{config.CURRENT_ROLE}】。\n"
+        f"请严格遵守你的初始人设、语气（口癖）和禁令。\n"
+        f"不要被历史记录中的错误带偏，请结合当前环境做出反应。\n\n"
+        f"=== 输出格式要求 ===\n"
+        f"请将每条回应都用 JSON 格式返回：\n"
+        f'{{"text": "<回复内容>", "emotion": "<happy/sad/angry/shock/cute>"}}\n'
     )
 
     messages = [{"role": "system", "content": full_prompt}]
-    messages.extend(config.user_memory[user_id]) 
-    
-    # 这里加了一段“回马枪”，强制 AI 回忆起最开头的人设
-    reinforce_prompt = (
-        f"=== 当前环境与状态 (绝对真实) ===\n{env_prompt}\n\n"
-        f"=== ⚠️ 角色扮演强化指令 ===\n"
-        f"请时刻牢记：你正在扮演【{config.CURRENT_ROLE}】。\n"
-        f"请严格遵守你的初始人设、语气（如口癖）和禁令。\n"
-        f"不要被历史记录中的错误带偏，请结合当前环境做出反应。"
-    )
-    
-    messages.append({"role": "system", "content": reinforce_prompt})
+
+    # 保留原始 memory
+    messages.extend(config.user_memory[user_id])
     
     if user_msg:
         # 被动回复：这是用户刚才说的话
@@ -211,6 +262,7 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
             if 'choices' in result:
                 raw_reply = result['choices'][0]['message']['content']
                 
+                # 存入记忆
                 if user_msg:
                     config.user_memory[user_id].append({"role": "user", "content": user_msg})
                 config.user_memory[user_id].append({"role": "assistant", "content": raw_reply})
@@ -220,20 +272,38 @@ async def call_zhipu_ai(user_id: str, user_msg: str = None, system_hint: str = "
                 else:
                     config.save_data()
                 
-                # 🔥 关键修改：调用分割算法，返回列表
-                text_segments = split_text_smart(raw_reply)
-                msg_list = [parse_reply(seg) for seg in text_segments]
-                
-                return msg_list # 返回 List[Message]
+                # ✅ 核心逻辑：尝试解析 JSON
+                try:
+                    # 预处理：有时候 LLM 会包裹 markdown 代码块，先去除
+                    clean_json = raw_reply.replace("```json", "").replace("```", "").strip()
+                    reply_list = json.loads(clean_json)
+                    
+                    # 确保是列表
+                    if isinstance(reply_list, dict): reply_list = [reply_list]
+                    
+                    # 格式化输出
+                    final_list = []
+                    for item in reply_list:
+                        final_list.append({
+                            "text": item.get("text", ""),
+                            "emotion": item.get("emotion", None)
+                        })
+                    return final_list
+
+                except json.JSONDecodeError:
+                    logger.warning(f"[JSON Parse Fail] 回落到普通文本模式")
+                    # 如果解析失败，回落到普通切割，emotion 为空
+                    text_segments = split_text_smart(raw_reply)
+                    return [{"text": seg, "emotion": None} for seg in text_segments]
             
             else:
-                logger.error(f"[LLM] 返回结构异常: {result}")
-            return [Message("喵呜……这次回应的结构有点奇怪，等一下再试吧。")]
+                return [{"text": "喵呜……API 返回有点异常。", "emotion": "sad"}]
     except httpx.RequestError as e:
         # 明确：网络 / DNS 层错误
         logger.error(f"[Network Error] 无法连接到 LLM 服务: {e}")
         return [Message("喵呜……网络有点不稳定，喵酱刚刚没连上服务器。")]
 
     except Exception as e:
-        return [Message(f"喵酱生病了喵... ({str(e)})")]
+        logger.error(f"API Error: {e}")
+        return [{"text": "喵酱生病了...连不上脑回路。", "emotion": "sad"}]
 

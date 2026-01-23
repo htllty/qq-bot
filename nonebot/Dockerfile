@@ -10,11 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装核心依赖
-# zhdate: 农历支持
-# nonebot-plugin-apscheduler: 定时任务
-# websocket-client: 语音支持
-RUN pip install --no-cache-dir nonebot2[fastapi] nonebot-adapter-onebot httpx nonebot-plugin-apscheduler zhdate websocket-client
+RUN pip install --no-cache-dir nonebot2[fastapi] \
+    nonebot-adapter-onebot \
+    httpx \
+    nonebot-plugin-apscheduler \
+    zhdate \
+    websocket-client \
+    nonebot-plugin-memes
 
+# 复制 bot 和插件文件
 COPY bot.py .
+COPY nonebot/plugins ./nonebot/plugins
+COPY nonebot_data ./nonebot_data
 
 CMD ["python", "bot.py"]
